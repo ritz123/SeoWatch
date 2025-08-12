@@ -1,8 +1,17 @@
-# SEO Tag Visual Manager
+# SeoWatch - SEO Tag Visual Manager
 
 ## Overview
 
-The SEO Tag Visual Manager (SeoWatch) is a full-stack web application that analyzes website SEO performance by extracting and validating meta tags. Users can input any website URL, and the app fetches the HTML server-side, extracts SEO-related meta tags, validates them against best practices, calculates an SEO score out of 100, and displays interactive previews showing how the page would appear on different social platforms (Google SERP, Facebook, Twitter, LinkedIn).
+SeoWatch is a full-stack web application that analyzes website SEO performance by extracting and validating meta tags. Users can input any website URL, and the app fetches the HTML server-side, extracts SEO-related meta tags, validates them against best practices, calculates an SEO score out of 100, and displays interactive previews showing how the page would appear on different social platforms (Google SERP, Facebook, Twitter, LinkedIn).
+
+## Recent Changes
+
+### August 12, 2025
+- **Project Completion**: Built complete SEO analysis tool with all requested features
+- **Documentation Added**: Created comprehensive README.md with installation and deployment instructions
+- **Features Implemented**: URL analysis, SEO scoring, tag validation, social media previews
+- **UI Complete**: Professional interface with color-coded scoring and responsive design
+- **Deployment Ready**: Multiple deployment options documented (Replit, Vercel, Railway, VPS)
 
 ## User Preferences
 
