@@ -1,0 +1,109 @@
+Build a full-stack web app called SEO Tag Visual Manager.
+
+Purpose: The app lets a user enter any website URL, fetches its HTML server-side, extracts SEO meta tags, validates them against best practices, calculates an SEO score out of 100, and shows interactive previews for Google SERP, Facebook, Twitter, and LinkedIn.
+
+Features:
+
+    URL Input Form — Single input field + “Analyze” button.
+
+    Server-Side HTML Fetch & Parse — Avoid CORS by using a backend (Node.js/Express). Use axios or node-fetch to get HTML, and cheerio to parse it.
+
+    Tag Extraction:
+
+        <title>
+
+        <meta name="description">
+
+        <meta name="robots">
+
+        Open Graph: <meta property="og:*">
+
+        Twitter Card: <meta name="twitter:*">
+
+    Validation Rules:
+
+        Title: 50–60 chars
+
+        Description: 150–160 chars
+
+        Robots: must exist
+
+        Open Graph: require og:title, og:description, og:image
+
+        Twitter Card: require twitter:card, twitter:title, twitter:description, twitter:image
+
+    SEO Score Calculation:
+
+        Start: 100 points
+
+        Deduct:
+
+            Missing <title>: –25
+
+            Title length too short/long: –10
+
+            Missing description: –20
+
+            Description too short/long: –10
+
+            Missing robots: –5
+
+            Missing OG tags: –5 each
+
+            Missing Twitter tags: –5 each
+
+        Minimum score: 0
+
+        Output: { score, breakdown: [{tag, issue, deduction}, ...] }
+
+    Visual Previews:
+
+        Google SERP style card (title + description + URL)
+
+        Facebook share card (image + title + description)
+
+        Twitter summary card (image + title + description)
+
+        LinkedIn share preview (OG tags)
+
+    Frontend (React + TailwindCSS):
+
+        URL input at top
+
+        Score display: large number + color-coded badge (Green 80–100, Yellow 60–79, Red <60)
+
+        Tag results in table: Tag Name | Value | Issue
+
+        Expandable “score breakdown” list
+
+        Previews section: cards styled like real platforms
+
+    Deployment:
+
+        Host frontend and backend in same Replit project
+
+        Backend routes: GET /analyze?url=<target>
+
+        Return JSON with tags, validation issues, score, and data for previews
+
+        Render results dynamically after fetch
+
+Tech Stack:
+
+    Frontend: React + TailwindCSS
+
+    Backend: Node.js + Express
+
+    Parsing: Cheerio
+
+    HTTP requests: Axios or node-fetch
+
+Notes:
+
+    Sanitize outputs to prevent XSS
+
+    Make it mobile-friendly
+
+    Aim for <3s analysis time for most sites
+
+Build this as an MVP — functionality over polish, but clean code structure.
