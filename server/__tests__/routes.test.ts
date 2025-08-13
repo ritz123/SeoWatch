@@ -27,7 +27,7 @@ describe('SEO Analyzer API', () => {
     it('should analyze a valid URL with complete SEO tags', async () => {
       const mockHtml = `
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
           <title>Perfect SEO Page - 50 Characters Long Title</title>
           <meta name="description" content="This is a perfect meta description that is exactly the right length for SEO optimization and provides valuable information about the page content.">
@@ -64,7 +64,7 @@ describe('SEO Analyzer API', () => {
     it('should handle missing SEO tags and provide warnings', async () => {
       const mockHtml = `
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
           <title>Bad</title>
         </head>
@@ -87,7 +87,7 @@ describe('SEO Analyzer API', () => {
     it('should handle completely missing SEO tags', async () => {
       const mockHtml = `
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <body>
           <h1>No SEO at all</h1>
         </body>
@@ -104,7 +104,7 @@ describe('SEO Analyzer API', () => {
     });
 
     it('should handle URLs without protocol by adding https', async () => {
-      const mockHtml = '<html><head><title>Test</title></head><body></body></html>';
+      const mockHtml = '<html lang="en"><head><title>Test</title></head><body></body></html>';
       jest.spyOn(axios, 'get').mockResolvedValue({ data: mockHtml });
 
       const response = await request(app)
@@ -156,5 +156,13 @@ describe('SEO Analyzer API', () => {
 
       expect(response.body).toHaveProperty('message');
     });
+  });
+
+  it('should return 404 for non-existent API path', async () => {
+    const response = await request(app)
+      .post('/api/nonexistent')
+      .send({})
+      .expect(404);
+    expect(response.body).toHaveProperty('message');
   });
 });

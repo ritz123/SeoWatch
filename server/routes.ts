@@ -442,6 +442,11 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
+  // Add 404 handler for unknown API routes
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ message: 'Not found' });
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
