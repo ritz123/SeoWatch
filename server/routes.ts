@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { seoAnalysisRequestSchema, type SeoAnalysisResult, type SeoTag, type SeoScoreBreakdown } from "@shared/schema";
+import { ZodError } from "zod";
 
 function sanitizeText(text: string): string {
   return text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
@@ -355,20 +356,17 @@ function analyzeSeoTags($: cheerio.CheerioAPI, url: string): {
   };
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  
+export function registerRoutes(app: Express): Server {
+  // API Routes
   app.post('/api/analyze', async (req, res) => {
     try {
-      const { url } = seoAnalysisRequestSchema.parse(req.body);
-      
-      // Ensure URL has protocol
-      let targetUrl = url;
-      if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-        targetUrl = 'https://' + targetUrl;
-      }
+      const { url: targetUrl } = seoAnalysisRequestSchema.parse(req.body);
 
-      // Fetch HTML content
-      const response = await axios.get(targetUrl, {
+      // Ensure URL has protocol
+      const urlToAnalyze = targetUrl.startsWith('http') ? targetUrl : `https://${targetUrl}`;
+
+      // Fetch the webpage
+      const response = await axios.get(urlToAnalyze, {
         timeout: 10000,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -376,15 +374,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const $ = cheerio.load(response.data);
-      const analysis = analyzeSeoTags($, targetUrl);
-      const domain = extractDomain(targetUrl);
+      const domain = extractDomain(urlToAnalyze);
 
-      // Extract data for previews
-      const title = $('title').first().text().trim() || domain;
+      // Analyze SEO tags
+      const { tags, breakdown, score } = analyzeSeoTags($, urlToAnalyze);
+
+      // Extract data for social media previews
+      const title = $('title').first().text().trim() || '';
       const description = $('meta[name="description"]').attr('content')?.trim() || '';
       const ogTitle = $('meta[property="og:title"]').attr('content')?.trim() || title;
       const ogDescription = $('meta[property="og:description"]').attr('content')?.trim() || description;
-      const ogImage = $('meta[property="og:image"]').attr('content')?.trim();
+      const ogImage = $('meta[property="og:image"]').attr('content')?.trim() || '';
       const twitterTitle = $('meta[name="twitter:title"]').attr('content')?.trim() || ogTitle;
       const twitterDescription = $('meta[name="twitter:description"]').attr('content')?.trim() || ogDescription;
       const twitterImage = $('meta[name="twitter:image"]').attr('content')?.trim() || ogImage;
@@ -392,9 +392,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const result: SeoAnalysisResult = {
         url: targetUrl,
-        score: analysis.score,
-        tags: analysis.tags,
-        breakdown: analysis.breakdown,
+        score,
+        breakdown,
+        tags,
         previews: {
           google: {
             title: sanitizeText(title),
@@ -426,19 +426,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error) {
       console.error('SEO analysis error:', error);
-      if (axios.isAxiosError(error)) {
-        if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
-          res.status(400).json({ message: 'Unable to reach the specified URL. Please check that the URL is correct and accessible.' });
-        } else if (error.response?.status === 404) {
-          res.status(400).json({ message: 'The specified page was not found (404 error).' });
-        } else if (error.response?.status && error.response.status >= 400) {
-          res.status(400).json({ message: `The server returned an error: ${error.response.status} ${error.response.statusText}` });
-        } else {
-          res.status(400).json({ message: 'Unable to analyze the URL. Please try again or check if the URL is accessible.' });
-        }
-      } else {
-        res.status(500).json({ message: 'An error occurred while analyzing the URL. Please try again.' });
+      if (error instanceof ZodError) {
+        return res.status(400).json({ message: "Invalid request body", errors: error.errors });
       }
+      const err = error as any;
+      if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') {
+        return res.status(400).json({ message: 'Unable to reach the specified URL. Please check that the URL is correct and accessible.' });
+      } else if (err.response?.status === 404) {
+        return res.status(400).json({ message: 'The specified page was not found (404 error).' });
+      } else if (err.response?.status && err.response.status >= 400) {
+        return res.status(400).json({ message: `The server returned an error: ${err.response.status} ${err.response.statusText}` });
+      }
+      // Fallback for other errors
+      return res.status(500).json({ message: 'An error occurred while analyzing the URL. Please try again.' });
     }
   });
 
