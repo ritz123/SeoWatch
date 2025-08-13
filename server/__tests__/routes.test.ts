@@ -152,7 +152,7 @@ describe('SEO Analyzer API', () => {
       const response = await request(app)
         .post('/api/analyze')
         .send({ invalidField: 'test' })
-        .expect(500);
+        .expect(400);
 
       expect(response.body).toHaveProperty('message');
     });
