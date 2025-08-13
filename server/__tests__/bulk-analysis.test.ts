@@ -1,323 +1,215 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { Request, Response } from 'express';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from '@jest/globals';
+import { generateResultsCSV, parseCSVUrls } from '../csv-processor';
+import * as fs from 'fs';
+import * as path from 'path';
+import type { BulkAnalysisResult } from '@shared/schema';
 
-// Mock dependencies with proper types
-const mockStorage = {
-  createBulkJob: jest.fn() as jest.MockedFunction<any>,
-  getBulkJob: jest.fn() as jest.MockedFunction<any>,
-  updateBulkJob: jest.fn() as jest.MockedFunction<any>,
-  getUserBulkJobs: jest.fn() as jest.MockedFunction<any>,
-  createBulkUrlResult: jest.fn() as jest.MockedFunction<any>,
-  getBulkUrlResults: jest.fn() as jest.MockedFunction<any>,
-  updateBulkUrlResult: jest.fn() as jest.MockedFunction<any>,
-};
+describe('Bulk Analysis Integration Tests', () => {
+  const testResultsPath = '/tmp/test-results.csv';
 
-const mockCSVProcessor = {
-  validateCSVFile: jest.fn() as jest.MockedFunction<any>,
-  parseCSVUrls: jest.fn() as jest.MockedFunction<any>,
-  generateResultsCSV: jest.fn() as jest.MockedFunction<any>,
-};
-
-const mockBulkQueue = {
-  processJob: jest.fn() as jest.MockedFunction<any>,
-  isProcessing: jest.fn() as jest.MockedFunction<any>,
-  getProcessingJobs: jest.fn() as jest.MockedFunction<any>,
-};
-
-jest.mock('../storage', () => ({ storage: mockStorage }));
-jest.mock('../csv-processor', () => mockCSVProcessor);
-jest.mock('../bulk-processor', () => ({ bulkAnalysisQueue: mockBulkQueue }));
-
-describe('Bulk Analysis API', () => {
-  let mockReq: Partial<Request>;
-  let mockRes: Partial<Response>;
-
-  beforeEach(() => {
-    mockReq = {
-      ip: '127.0.0.1',
-      headers: { 'user-agent': 'test-agent' },
-      params: {},
-      body: {},
-      file: undefined
-    };
-    
-    mockRes = {
-      status: jest.fn().mockReturnThis() as any,
-      json: jest.fn().mockReturnThis() as any,
-      setHeader: jest.fn().mockReturnThis() as any,
-    };
-
-    // Clear all mocks
-    jest.clearAllMocks();
+  beforeAll(() => {
+    // Ensure results directory exists
+    if (!fs.existsSync(path.dirname(testResultsPath))) {
+      fs.mkdirSync(path.dirname(testResultsPath), { recursive: true });
+    }
   });
 
-  describe('CSV Processing', () => {
-    it('should parse CSV file and extract URLs', async () => {
-      const mockUrls = ['https://example.com', 'https://test.com'];
-      mockCSVProcessor.parseCSVUrls.mockResolvedValue(mockUrls);
+  beforeEach(() => {
+    // Setup for each test
+  });
 
-      const testFile = '/test/test-urls.csv';
-      const result = await mockCSVProcessor.parseCSVUrls(testFile);
+  afterEach(() => {
+    // Clean up test files
+    if (fs.existsSync(testResultsPath)) {
+      fs.unlinkSync(testResultsPath);
+    }
+  });
 
-      expect(result).toEqual(mockUrls);
-      expect(mockCSVProcessor.parseCSVUrls).toHaveBeenCalledWith(testFile);
-    });
-
-    it('should validate CSV file size and format', async () => {
-      const validationResult = {
-        valid: true,
-        urlCount: 50
-      };
-      mockCSVProcessor.validateCSVFile.mockResolvedValue(validationResult);
-
-      const testFile = '/test/valid-urls.csv';
-      const result = await mockCSVProcessor.validateCSVFile(testFile);
-
-      expect(result.valid).toBe(true);
-      expect(result.urlCount).toBe(50);
-    });
-
-    it('should reject files that are too large', async () => {
-      const validationResult = {
-        valid: false,
-        error: 'File size 15.5MB exceeds maximum of 10MB'
-      };
-      mockCSVProcessor.validateCSVFile.mockResolvedValue(validationResult);
-
-      const testFile = '/test/large-file.csv';
-      const result = await mockCSVProcessor.validateCSVFile(testFile);
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('exceeds maximum');
-    });
-
-    it('should reject files with too many URLs', async () => {
-      const validationResult = {
-        valid: false,
-        error: 'CSV contains 1500 URLs. Maximum allowed is 1000 URLs per batch.'
-      };
-      mockCSVProcessor.validateCSVFile.mockResolvedValue(validationResult);
-
-      const testFile = '/test/too-many-urls.csv';
-      const result = await mockCSVProcessor.validateCSVFile(testFile);
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Maximum allowed is 1000');
-    });
-
-    it('should generate CSV results from analysis data', async () => {
-      const mockResults = [
+  describe('CSV Generation with Score Breakdown', () => {
+    it('should include score breakdown in CSV output', async () => {
+      const testResults: BulkAnalysisResult[] = [
         {
           url: 'https://example.com',
           seoScore: 85,
-          titleTag: 'Example Site',
-          titleLength: 12,
-          metaDescription: 'Example description',
-          metaDescriptionLength: 19,
-          h1Tag: 'Welcome',
-          ogTitle: 'Example Site',
-          ogDescription: 'Example description',
-          ogImage: '/image.jpg',
-          twitterTitle: 'Example Site',
-          twitterDescription: 'Example description',
-          twitterCard: 'summary',
-          robotsTag: 'index,follow',
+          titleTag: 'Example Page Title',
+          titleLength: 18,
+          metaDescription: 'This is an example meta description for testing purposes.',
+          metaDescriptionLength: 56,
+          h1Tag: 'Main Heading',
+          ogTitle: 'Example Page Title',
+          ogDescription: 'Example OG description',
+          ogImage: 'https://example.com/image.jpg',
+          twitterTitle: 'Example Page Title',
+          twitterDescription: 'Example Twitter description',
+          twitterCard: 'summary_large_image',
+          robotsTag: 'index, follow',
           canonicalUrl: 'https://example.com',
-          analysisDate: '2025-08-13T10:30:00Z'
-        }
-      ];
-
-      mockCSVProcessor.generateResultsCSV.mockResolvedValue(undefined);
-
-      const outputPath = '/tmp/test-results.csv';
-      await mockCSVProcessor.generateResultsCSV(mockResults, outputPath);
-
-      expect(mockCSVProcessor.generateResultsCSV).toHaveBeenCalledWith(mockResults, outputPath);
-    });
-  });
-
-  describe('Bulk Analysis Job Management', () => {
-    it('should create a new bulk analysis job', async () => {
-      const mockJob = {
-        id: 'job-123',
-        userSession: '127.0.0.1-test-agent',
-        filename: 'test-urls.csv',
-        totalUrls: 10,
-        processedUrls: 0,
-        status: 'pending' as const,
-        createdAt: '2025-08-13T10:00:00Z'
-      };
-
-      mockStorage.createBulkJob.mockResolvedValue(mockJob);
-
-      const insertJob = {
-        userSession: '127.0.0.1-test-agent',
-        filename: 'test-urls.csv',
-        totalUrls: 10,
-        processedUrls: 0,
-        status: 'pending' as const
-      };
-
-      const result = await mockStorage.createBulkJob(insertJob);
-
-      expect(result).toEqual(mockJob);
-      expect(mockStorage.createBulkJob).toHaveBeenCalledWith(insertJob);
-    });
-
-    it('should update job progress', async () => {
-      const updatedJob = {
-        id: 'job-123',
-        userSession: '127.0.0.1-test-agent',
-        filename: 'test-urls.csv',
-        totalUrls: 10,
-        processedUrls: 5,
-        status: 'processing' as const,
-        createdAt: '2025-08-13T10:00:00Z'
-      };
-
-      mockStorage.updateBulkJob.mockResolvedValue(updatedJob);
-
-      const result = await mockStorage.updateBulkJob('job-123', { processedUrls: 5, status: 'processing' });
-
-      expect(result).toEqual(updatedJob);
-      expect(mockStorage.updateBulkJob).toHaveBeenCalledWith('job-123', { processedUrls: 5, status: 'processing' });
-    });
-
-    it('should retrieve user jobs', async () => {
-      const mockJobs = [
+          analysisDate: '2024-01-01T00:00:00.000Z',
+          scoreBreakdown: [
+            {
+              tag: 'Title',
+              issue: 'Title too short',
+              deduction: 10
+            },
+            {
+              tag: 'Meta Description',
+              issue: 'Description too short',
+              deduction: 5
+            }
+          ],
+          breakdownSummary: 'Title: Title too short (-10pts); Meta Description: Description too short (-5pts)'
+        },
         {
-          id: 'job-123',
-          userSession: '127.0.0.1-test-agent',
-          filename: 'test-urls.csv',
-          totalUrls: 10,
-          processedUrls: 10,
-          status: 'completed' as const,
-          createdAt: '2025-08-13T10:00:00Z',
-          completedAt: '2025-08-13T10:05:00Z'
+          url: 'https://example2.com',
+          seoScore: 100,
+          titleTag: 'Perfect SEO Page Title That Is Just Right Length',
+          titleLength: 46,
+          metaDescription: 'This is a perfect meta description that falls within the recommended character count for optimal SEO performance.',
+          metaDescriptionLength: 124,
+          h1Tag: 'Perfect Main Heading',
+          ogTitle: 'Perfect SEO Page Title',
+          ogDescription: 'Perfect OG description',
+          ogImage: 'https://example2.com/image.jpg',
+          twitterTitle: 'Perfect SEO Page Title',
+          twitterDescription: 'Perfect Twitter description',
+          twitterCard: 'summary',
+          robotsTag: 'index, follow',
+          canonicalUrl: 'https://example2.com',
+          analysisDate: '2024-01-01T00:00:00.000Z',
+          scoreBreakdown: [],
+          breakdownSummary: 'No issues found'
         }
       ];
 
-      mockStorage.getUserBulkJobs.mockResolvedValue(mockJobs);
+      await generateResultsCSV(testResults, testResultsPath);
 
-      const result = await mockStorage.getUserBulkJobs('127.0.0.1-test-agent');
+      // Verify file was created
+      expect(fs.existsSync(testResultsPath)).toBe(true);
 
-      expect(result).toEqual(mockJobs);
-      expect(mockStorage.getUserBulkJobs).toHaveBeenCalledWith('127.0.0.1-test-agent');
+      // Read and verify CSV content
+      const csvContent = fs.readFileSync(testResultsPath, 'utf-8');
+      const lines = csvContent.split('\n').filter(line => line.trim());
+
+      // Check header includes breakdown columns
+      const header = lines[0];
+      expect(header).toContain('Score_Breakdown_Summary');
+      expect(header).toContain('Breakdown_Details');
+
+      // Check first result row includes breakdown data
+      const firstDataRow = lines[1];
+      expect(firstDataRow).toContain('Title: Title too short (-10pts); Meta Description: Description too short (-5pts)');
+      expect(firstDataRow).toContain('""tag"":""Title""');
+
+      // Check second result row shows no issues
+      const secondDataRow = lines[2];
+      expect(secondDataRow).toContain('No issues found');
+      expect(secondDataRow).toContain('[]'); // Empty breakdown array
+    });
+
+    it('should handle error cases with empty breakdown', async () => {
+      const errorResult: BulkAnalysisResult[] = [
+        {
+          url: 'https://failed-example.com',
+          seoScore: 0,
+          titleTag: '',
+          titleLength: 0,
+          metaDescription: '',
+          metaDescriptionLength: 0,
+          h1Tag: '',
+          ogTitle: '',
+          ogDescription: '',
+          ogImage: '',
+          twitterTitle: '',
+          twitterDescription: '',
+          twitterCard: '',
+          robotsTag: '',
+          canonicalUrl: '',
+          analysisDate: '2024-01-01T00:00:00.000Z',
+          scoreBreakdown: [],
+          breakdownSummary: '',
+          errorMessage: 'Failed to fetch page'
+        }
+      ];
+
+      await generateResultsCSV(errorResult, testResultsPath);
+
+      const csvContent = fs.readFileSync(testResultsPath, 'utf-8');
+      const lines = csvContent.split('\n').filter(line => line.trim());
+
+      // Verify error case is handled properly
+      const dataRow = lines[1];
+      expect(dataRow).toContain('Failed to fetch page');
+      expect(dataRow).toContain('[]'); // Empty breakdown array
     });
   });
 
-  describe('Job Queue Processing', () => {
-    it('should process a job successfully', async () => {
-      mockBulkQueue.processJob.mockResolvedValue(undefined);
+  describe('CSV Header Validation', () => {
+    it('should have all required columns including breakdown fields', async () => {
+      const emptyResults: BulkAnalysisResult[] = [];
+      await generateResultsCSV(emptyResults, testResultsPath);
 
-      await mockBulkQueue.processJob('job-123');
+      const csvContent = fs.readFileSync(testResultsPath, 'utf-8');
+      const header = csvContent.split('\n')[0];
 
-      expect(mockBulkQueue.processJob).toHaveBeenCalledWith('job-123');
-    });
+      const expectedColumns = [
+        'URL',
+        'SEO_Score',
+        'Title_Tag',
+        'Title_Length',
+        'Meta_Description',
+        'Meta_Description_Length',
+        'H1_Tag',
+        'OG_Title',
+        'OG_Description',
+        'OG_Image',
+        'Twitter_Title',
+        'Twitter_Description',
+        'Twitter_Card',
+        'Robots_Tag',
+        'Canonical_URL',
+        'Analysis_Date',
+        'Score_Breakdown_Summary',
+        'Breakdown_Details',
+        'Error_Message'
+      ];
 
-    it('should handle job processing errors', async () => {
-      mockBulkQueue.processJob.mockRejectedValue(new Error('Processing failed'));
-
-      await expect(mockBulkQueue.processJob('job-123')).rejects.toThrow('Processing failed');
-    });
-
-    it('should track processing status', () => {
-      mockBulkQueue.isProcessing.mockReturnValue(true);
-      mockBulkQueue.getProcessingJobs.mockReturnValue(['job-123']);
-
-      expect(mockBulkQueue.isProcessing('job-123')).toBe(true);
-      expect(mockBulkQueue.getProcessingJobs()).toContain('job-123');
-    });
-  });
-
-  describe('Error Scenarios', () => {
-    it('should handle non-existent job requests', async () => {
-      mockStorage.getBulkJob.mockResolvedValue(undefined);
-
-      const result = await mockStorage.getBulkJob('non-existent-job');
-
-      expect(result).toBeUndefined();
-    });
-
-    it('should handle invalid CSV format', async () => {
-      const validationResult = {
-        valid: false,
-        error: 'Invalid CSV file: Unable to parse CSV format'
-      };
-      mockCSVProcessor.validateCSVFile.mockResolvedValue(validationResult);
-
-      const testFile = '/test/invalid.csv';
-      const result = await mockCSVProcessor.validateCSVFile(testFile);
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Invalid CSV file');
-    });
-
-    it('should handle missing URL column', async () => {
-      const validationResult = {
-        valid: false,
-        error: 'No valid URLs found in CSV file. Please ensure your CSV has a column with URLs.'
-      };
-      mockCSVProcessor.validateCSVFile.mockResolvedValue(validationResult);
-
-      const testFile = '/test/no-urls.csv';
-      const result = await mockCSVProcessor.validateCSVFile(testFile);
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('No valid URLs found');
+      expectedColumns.forEach(column => {
+        expect(header).toContain(column);
+      });
     });
   });
 });
 
-describe('Integration Tests', () => {
-  it('should complete full bulk analysis workflow', async () => {
-    // Mock a complete workflow from upload to download
-    const mockJob = {
-      id: 'job-integration-test',
-      userSession: '127.0.0.1-test-agent',
-      filename: 'integration-test.csv',
-      totalUrls: 3,
-      processedUrls: 0,
-      status: 'pending' as const,
-      createdAt: '2025-08-13T10:00:00Z'
-    };
+describe('Integration Test: CSV Processing', () => {
+  const testUploadDir = '/tmp/test-uploads';
+  const testCsvPath = path.join(testUploadDir, 'test-urls.csv');
 
-    const mockUrls = ['https://example.com', 'https://test.com', 'https://demo.com'];
-    
-    // Mock the entire workflow
-    mockCSVProcessor.validateCSVFile.mockResolvedValue({ valid: true, urlCount: 3 });
-    mockCSVProcessor.parseCSVUrls.mockResolvedValue(mockUrls);
-    mockStorage.createBulkJob.mockResolvedValue(mockJob);
-    mockStorage.updateBulkJob.mockResolvedValue({
-      ...mockJob,
-      status: 'completed',
-      processedUrls: 3,
-      completedAt: '2025-08-13T10:05:00Z',
-      resultFilePath: '/results/job-integration-test_results.csv'
-    });
+  beforeAll(() => {
+    // Create test directories
+    if (!fs.existsSync(testUploadDir)) {
+      fs.mkdirSync(testUploadDir, { recursive: true });
+    }
 
-    // Simulate the workflow
-    const validation = await mockCSVProcessor.validateCSVFile('/test/integration-test.csv');
-    expect(validation.valid).toBe(true);
+    // Create test CSV file
+    const testCsvContent = 'url\nhttps://example.com\nhttps://google.com';
+    fs.writeFileSync(testCsvPath, testCsvContent);
+  });
 
-    const job = await mockStorage.createBulkJob({
-      userSession: '127.0.0.1-test-agent',
-      filename: 'integration-test.csv',
-      totalUrls: 3,
-      processedUrls: 0,
-      status: 'pending'
-    });
-    expect(job.id).toBe('job-integration-test');
+  afterAll(() => {
+    // Clean up test files and directories
+    if (fs.existsSync(testCsvPath)) {
+      fs.unlinkSync(testCsvPath);
+    }
+    if (fs.existsSync(testUploadDir)) {
+      fs.rmdirSync(testUploadDir);
+    }
+  });
 
-    const urls = await mockCSVProcessor.parseCSVUrls('/test/integration-test.csv');
-    expect(urls).toEqual(mockUrls);
+  it('should parse CSV and verify URL extraction', async () => {
+    const urls = await parseCSVUrls(testCsvPath);
 
-    const completedJob = await mockStorage.updateBulkJob(job.id, {
-      status: 'completed',
-      processedUrls: 3,
-      completedAt: '2025-08-13T10:05:00Z',
-      resultFilePath: '/results/job-integration-test_results.csv'
-    });
-    expect(completedJob?.status).toBe('completed');
+    expect(urls).toHaveLength(2);
+    expect(urls).toContain('https://example.com');
+    expect(urls).toContain('https://google.com');
   });
 });

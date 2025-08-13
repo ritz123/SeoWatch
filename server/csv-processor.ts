@@ -83,6 +83,8 @@ export async function generateResultsCSV(results: BulkAnalysisResult[], outputPa
       'Robots_Tag',
       'Canonical_URL',
       'Analysis_Date',
+      'Score_Breakdown_Summary',
+      'Breakdown_Details',
       'Error_Message'
     ];
 
@@ -103,6 +105,8 @@ export async function generateResultsCSV(results: BulkAnalysisResult[], outputPa
       result.robotsTag,
       result.canonicalUrl,
       result.analysisDate,
+      result.breakdownSummary,
+      result.scoreBreakdown ? JSON.stringify(result.scoreBreakdown) : '',
       result.errorMessage || ''
     ]);
 

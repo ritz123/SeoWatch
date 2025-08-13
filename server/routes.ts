@@ -11,6 +11,39 @@ import { ZodError } from "zod";
 import { bulkAnalysisQueue } from "./bulk-processor";
 import { validateCSVFile, ensureUploadDir, cleanupFile } from "./csv-processor";
 
+// Configure multer for file uploads
+const upload = multer({
+  dest: 'uploads/',
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    // Only allow CSV files
+    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'));
+    }
+  }
+});
+
+// Add error handling middleware for multer
+const handleMulterError = (err: any, req: any, res: any, next: any) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File size too large. Maximum allowed size is 10MB.' });
+    }
+    if (err.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'Too many files. Only one file is allowed.' });
+    }
+  }
+  if (err.message === 'Only CSV files are allowed') {
+    return res.status(400).json({ error: 'Only CSV files are allowed. Please upload a valid CSV file.' });
+  }
+  next(err);
+};
+
 function sanitizeText(text: string): string {
   return text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
              .replace(/<[^>]*>/g, '')
@@ -365,21 +398,6 @@ function analyzeSeoTags($: cheerio.CheerioAPI, url: string): {
 export { analyzeSeoTags };
 
 export function registerRoutes(app: Express): Server {
-  // Configure multer for file uploads
-  const upload = multer({
-    dest: 'uploads/',
-    limits: {
-      fileSize: 10 * 1024 * 1024, // 10MB limit
-    },
-    fileFilter: (req, file, cb) => {
-      if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
-        cb(null, true);
-      } else {
-        cb(new Error('Only CSV files are allowed'));
-      }
-    }
-  });
-
   // Ensure directories exist
   const initDirectories = async () => {
     await ensureUploadDir('uploads');
@@ -482,7 +500,7 @@ export function registerRoutes(app: Express): Server {
   /**
    * POST /api/bulk/upload - Upload CSV file for bulk analysis
    */
-  app.post('/api/bulk/upload', upload.single('file'), async (req, res) => {
+  app.post('/api/bulk/upload', upload.single('file'), handleMulterError, async (req: any, res: any) => {
     try {
       if (!req.file) {
         return res.status(400).json({

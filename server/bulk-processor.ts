@@ -85,6 +85,8 @@ export class BulkAnalysisQueue extends EventEmitter {
               robotsTag: '',
               canonicalUrl: '',
               analysisDate: new Date().toISOString(),
+              scoreBreakdown: [],
+              breakdownSummary: '',
               errorMessage: result.reason?.message || 'Analysis failed'
             };
             results.push(errorResult);
@@ -148,6 +150,9 @@ export class BulkAnalysisQueue extends EventEmitter {
     try {
       const analysis = await Promise.race([analysisPromise, timeoutPromise]);
       
+      // Format score breakdown for CSV
+      const breakdownSummary = this.formatBreakdownSummary(analysis.breakdown);
+
       // Convert full analysis to CSV format
       const csvResult: BulkAnalysisResult = {
         url: analysis.url,
@@ -165,7 +170,9 @@ export class BulkAnalysisQueue extends EventEmitter {
         twitterCard: analysis.previews.twitter.card,
         robotsTag: this.extractTagContent(analysis.tags, 'Robots'),
         canonicalUrl: this.extractTagContent(analysis.tags, 'Canonical'),
-        analysisDate: new Date().toISOString()
+        analysisDate: new Date().toISOString(),
+        scoreBreakdown: analysis.breakdown,
+        breakdownSummary
       };
 
       // Store individual result
@@ -289,6 +296,21 @@ export class BulkAnalysisQueue extends EventEmitter {
    */
   isProcessing(jobId: string): boolean {
     return this.processingJobs.has(jobId);
+  }
+
+  /**
+   * Format the breakdown data for CSV export
+   * @param breakdown Original breakdown data
+   * @returns Formatted breakdown summary
+   */
+  private formatBreakdownSummary(breakdown: any[]): string {
+    if (!breakdown || !Array.isArray(breakdown) || breakdown.length === 0) {
+      return 'No issues found';
+    }
+
+    return breakdown
+      .map(item => `${item.tag}: ${item.issue} (-${item.deduction}pts)`)
+      .join('; ');
   }
 }
 

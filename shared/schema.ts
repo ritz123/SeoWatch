@@ -95,6 +95,9 @@ export const bulkAnalysisResultSchema = z.object({
   canonicalUrl: z.string(),
   analysisDate: z.string(),
   errorMessage: z.string().optional(),
+  // Add score breakdown information
+  scoreBreakdown: z.array(seoScoreBreakdownSchema),
+  breakdownSummary: z.string(), // Formatted summary of all deductions
 });
 
 export const jobProgressSchema = z.object({
