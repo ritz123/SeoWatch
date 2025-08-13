@@ -3,8 +3,13 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { seoAnalysisRequestSchema, type SeoAnalysisResult, type SeoTag, type SeoScoreBreakdown } from "@shared/schema";
+import multer from "multer";
+import * as path from "path";
+import * as fs from "fs";
+import { seoAnalysisRequestSchema, type SeoAnalysisResult, type SeoTag, type SeoScoreBreakdown, type JobProgress } from "@shared/schema";
 import { ZodError } from "zod";
+import { bulkAnalysisQueue } from "./bulk-processor";
+import { validateCSVFile, ensureUploadDir, cleanupFile } from "./csv-processor";
 
 function sanitizeText(text: string): string {
   return text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
@@ -356,7 +361,37 @@ function analyzeSeoTags($: cheerio.CheerioAPI, url: string): {
   };
 }
 
+// Export the analyzeSeoTags function so it can be used by bulk-processor
+export { analyzeSeoTags };
+
 export function registerRoutes(app: Express): Server {
+  // Configure multer for file uploads
+  const upload = multer({
+    dest: 'uploads/',
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit
+    },
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only CSV files are allowed'));
+      }
+    }
+  });
+
+  // Ensure directories exist
+  const initDirectories = async () => {
+    await ensureUploadDir('uploads');
+    await ensureUploadDir('results');
+  };
+  initDirectories().catch(console.error);
+
+  // Generate session ID for tracking user jobs
+  const getSessionId = (req: any) => {
+    return req.ip + '-' + (req.headers['user-agent'] || 'unknown');
+  };
+
   // API Routes
   app.post('/api/analyze', async (req, res) => {
     try {
@@ -442,9 +477,221 @@ export function registerRoutes(app: Express): Server {
     }
   });
 
-  // Add 404 handler for unknown API routes
-  app.all('/api/*', (req, res) => {
-    res.status(404).json({ message: 'Not found' });
+  // Bulk Analysis Routes
+
+  /**
+   * POST /api/bulk/upload - Upload CSV file for bulk analysis
+   */
+  app.post('/api/bulk/upload', upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          error: 'No file uploaded. Please select a CSV file.'
+        });
+      }
+
+      const sessionId = getSessionId(req);
+      const uploadedFile = req.file;
+
+      // Validate CSV file
+      const validation = await validateCSVFile(uploadedFile.path);
+      if (!validation.valid) {
+        await cleanupFile(uploadedFile.path);
+        return res.status(400).json({
+          error: validation.error
+        });
+      }
+
+      // Create job in database
+      const job = await storage.createBulkJob({
+        userSession: sessionId,
+        filename: uploadedFile.originalname,
+        totalUrls: validation.urlCount!,
+        processedUrls: 0,
+        status: 'pending'
+      });
+
+      // Move file to permanent location with job ID
+      const permanentPath = path.join('uploads', `${job.id}.csv`);
+      await fs.promises.rename(uploadedFile.path, permanentPath);
+
+      // Start processing job in background
+      bulkAnalysisQueue.processJob(job.id).catch(console.error);
+
+      res.json({
+        jobId: job.id,
+        totalUrls: validation.urlCount!,
+        estimatedCompletionTime: new Date(Date.now() + validation.urlCount! * 2000).toISOString()
+      });
+
+    } catch (error) {
+      console.error('Bulk upload error:', error);
+      if (req.file) {
+        await cleanupFile(req.file.path);
+      }
+      res.status(500).json({
+        error: 'Failed to process file upload. Please try again.'
+      });
+    }
+  });
+
+  /**
+   * GET /api/bulk/status/:jobId - Get job status and progress
+   */
+  app.get('/api/bulk/status/:jobId', async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = await storage.getBulkJob(jobId);
+
+      if (!job) {
+        return res.status(404).json({
+          error: 'Job not found'
+        });
+      }
+
+      const progress: JobProgress = {
+        jobId: job.id,
+        status: job.status,
+        progress: {
+          total: job.totalUrls,
+          processed: job.processedUrls,
+          percentage: Math.round((job.processedUrls / job.totalUrls) * 100)
+        }
+      };
+
+      // Add estimated time remaining for processing jobs
+      if (job.status === 'processing' && job.processedUrls > 0) {
+        const remaining = job.totalUrls - job.processedUrls;
+        const avgTimePerUrl = 2000; // 2 seconds average
+        const estimatedMs = remaining * avgTimePerUrl;
+        progress.estimatedTimeRemaining = new Date(Date.now() + estimatedMs).toISOString();
+      }
+
+      res.json(progress);
+
+    } catch (error) {
+      console.error('Status check error:', error);
+      res.status(500).json({
+        error: 'Failed to get job status'
+      });
+    }
+  });
+
+  /**
+   * GET /api/bulk/download/:jobId - Download CSV results
+   */
+  app.get('/api/bulk/download/:jobId', async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = await storage.getBulkJob(jobId);
+
+      if (!job) {
+        return res.status(404).json({
+          error: 'Job not found'
+        });
+      }
+
+      if (job.status !== 'completed') {
+        return res.status(400).json({
+          error: 'Job is not completed yet'
+        });
+      }
+
+      if (!job.resultFilePath || !fs.existsSync(job.resultFilePath)) {
+        return res.status(404).json({
+          error: 'Result file not found'
+        });
+      }
+
+      // Set headers for file download
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${job.filename.replace('.csv', '_results.csv')}"`);
+
+      // Stream the file
+      const fileStream = fs.createReadStream(job.resultFilePath);
+      fileStream.pipe(res);
+
+    } catch (error) {
+      console.error('Download error:', error);
+      res.status(500).json({
+        error: 'Failed to download results'
+      });
+    }
+  });
+
+  /**
+   * GET /api/bulk/jobs - Get user's bulk analysis jobs
+   */
+  app.get('/api/bulk/jobs', async (req, res) => {
+    try {
+      const sessionId = getSessionId(req);
+      const jobs = await storage.getUserBulkJobs(sessionId);
+
+      const jobsWithStatus = jobs.map(job => ({
+        jobId: job.id,
+        filename: job.filename,
+        status: job.status,
+        createdAt: job.createdAt,
+        completedAt: job.completedAt,
+        totalUrls: job.totalUrls,
+        processedUrls: job.processedUrls,
+        progress: Math.round((job.processedUrls / job.totalUrls) * 100)
+      }));
+
+      res.json({ jobs: jobsWithStatus });
+
+    } catch (error) {
+      console.error('Jobs list error:', error);
+      res.status(500).json({
+        error: 'Failed to get jobs list'
+      });
+    }
+  });
+
+  /**
+   * DELETE /api/bulk/jobs/:jobId - Cancel or delete a job
+   */
+  app.delete('/api/bulk/jobs/:jobId', async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const sessionId = getSessionId(req);
+
+      const job = await storage.getBulkJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      // Verify ownership
+      if (job.userSession !== sessionId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Update job status to cancelled if it's still processing
+      if (job.status === 'pending' || job.status === 'processing') {
+        await storage.updateBulkJob(jobId, { status: 'failed' });
+      }
+
+      // Clean up files
+      const uploadPath = path.join('uploads', `${jobId}.csv`);
+      if (fs.existsSync(uploadPath)) {
+        await cleanupFile(uploadPath);
+      }
+
+      if (job.resultFilePath && fs.existsSync(job.resultFilePath)) {
+        await cleanupFile(job.resultFilePath);
+      }
+
+      res.json({ message: 'Job cancelled successfully' });
+
+    } catch (error) {
+      console.error('Job cancellation error:', error);
+      res.status(500).json({ error: 'Failed to cancel job' });
+    }
+  });
+
+  // Handle 404 for API routes
+  app.use('/api/*', (req, res) => {
+    res.status(404).json({ message: 'API endpoint not found' });
   });
 
   const httpServer = createServer(app);
